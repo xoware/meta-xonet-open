@@ -1,0 +1,32 @@
+DESCRIPTION = "Daemon to handle device specifc features."
+SECTION = "base"
+LICENSE = "CLOSED"
+DEPENDS = "libgcrypt curl libmicrohttpd libnl jansson file gnutls c-ares libpam libpnc"
+
+DEPENDS += "glib-2.0 libnice"
+
+#SRCREV = "HEAD"
+SRCREV = "${AUTOREV}"
+#PV = "0.1+git${SRCPV}"
+PR = "r0"
+
+inherit autotools pkgconfig 
+
+EXTRA_OECONF="--enable-httpd --enable-mvs --enable-dnsmasq --with-pam-mods-dir=${base_libdir}/security "
+
+SRC_URI = "git://github.com/xoware/xokd.git;branch=master;protocol=ssh;user=git"
+#SRC_URI = "git:///mnt/xo/guest/xokd;branch=local;protocol=file"
+
+
+S = "${WORKDIR}/git"
+
+#uncomment this to build code on local PC not on git repo
+#inherit externalsrc
+#S = "/root/oe-yocto/xokd"
+#S = "/home/karl/Work/xoware/xokd"
+
+
+PACKAGE_ARCH = "${MACHINE_ARCH}"
+
+FILES_${PN} += "${base_libdir}/security/pam_xokd.*"
+FILES_${PN}-dbg += "${base_libdir}/security/.debug/pam_xokd.*"

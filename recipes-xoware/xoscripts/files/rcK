@@ -1,0 +1,8 @@
+#!/bin/sh
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+killall xokd telnetd xosh syslogd klogd
+killall5
+[ -d /xokcfg ] && (df | grep xokcfg ) 2>&1 > /dev/null &&  date +%Y%m%d%H%M > /xokcfg/wc.sav
+sync
+umount /storage
+umount /xokcfg

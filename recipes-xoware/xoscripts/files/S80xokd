@@ -1,0 +1,5 @@
+#!/bin/sh
+
+#/usr/bin/xokd -r /var/www/ui -d
+/usr/bin/resetd -d
+/usr/bin/xokd-watcher.sh &

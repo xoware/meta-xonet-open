@@ -1,0 +1,43 @@
+This is a quick howto develop with ExoKey on network.
+
+1.  Follow README  to build images and tree
+
+2.  Setup Dev workstation with TFTP server.  eg:  atftpd --daemon /tftproot
+
+4. Symlink the rootfs dir to /rootfs  we need a shorter path as there is a limit how long the uboot/linux command line can be. 
+ln -s  /home/karl/Work/yocto/poky/build_mvs/tmp/work/xo1_mvs-poky-linux-gnueabi/mvs-image/1.0-r0/rootfs  xo1
+
+3.  Setup Dev workstation with NFS server and add exports
+$ cat /etc/exports 
+
+# /etc/exports: NFS file systems being exported.  See exports(5).
+/home/karl/Work/  10.0.0.0/8(ro,no_subtree_check)
+/xo1/ 10.0.0.0/8(ro,no_subtree_check)
+
+5. Create symlinks to dtb, and kernel
+cd /tftproot
+ln -s /home/karl/Work/yocto/poky-dylan-9.0.1/build/tmp/deploy/images/uImage uImage.mvs
+
+
+6.  confgure uboot, see linux/Documentation/ {kernel-parameters.txt, filesystems/nfs/nfsroot.txt} for info:
+
+setenv bootcmd "tftpboot 0x22000000 uImage.mvs; bootm 0x22000000
+setenv bootargs "console=ttyS0,38400 root=/dev/nfs nfsroot=10.64.1.2:/xo1 ip=10.64.1.6:10.64.1.2:10.64.1.1:255.0.0.0:mvs:eth0 debug"
+
+
+Know working uboot config:
+
+CNS3000 # printenv
+bootdelay=2
+baudrate=38400
+ethaddr=00:53:43:4F:54:54
+netmask=255.255.255.0
+tftp_bsize=512
+udp_frag_size=512
+ipaddr=10.64.1.7
+serverip=10.64.1.2
+bootcmd=tftpboot 0x22000000 uImage.mvs; bootm 0x22000000
+bootargs="console=ttyS0,38400 root=/dev/nfs nfsroot=10.64.1.2:/xo1 ip=10.64.1.6:10.64.1.2:10.64.1.1:255.0.0.0:mvs:eth0 debug"
+stdin=serial
+stdout=serial
+stderr=serial

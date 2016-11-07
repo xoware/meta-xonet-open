@@ -1,0 +1,37 @@
+From 2ae481b9693d56f0372df9bf8ca968d93302fc12 Mon Sep 17 00:00:00 2001
+From: Karl Hiramoto <karl@hiramoto.org>
+Date: Fri, 15 Nov 2013 10:42:27 +0100
+Subject: [PATCH] some libc implementations don't define struct ip_mreqn define
+ it here if CFLAG passed with -DNEED_STRUCT_IP_MREQN
+
+I found this issue cross compiling for ARM using eclibc in the
+https://www.yoctoproject.org/  build system.
+---
+ miniupnpc/miniupnpc.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/miniupnpc/miniupnpc.c b/miniupnpc/miniupnpc.c
+index 5c191c5..95504b1 100644
+--- a/miniupnpc/miniupnpc.c
++++ b/miniupnpc/miniupnpc.c
+@@ -71,6 +71,17 @@
+ #define TIMEVAL struct timeval
+ #endif
+ 
++
++#if defined(HAS_IP_MREQN) && defined(NEED_STRUCT_IP_MREQN)
++/* Several versions of glibc don't define this structure, define it here and compile with CFLAGS NEED_STRUCT_IP_MREQN */
++struct ip_mreqn
++{
++	struct in_addr	imr_multiaddr;		/* IP multicast address of group */
++	struct in_addr	imr_address;		/* local IP address of interface */
++	int		imr_ifindex;		/* Interface index */
++};
++#endif
++
+ #include "miniupnpc.h"
+ #include "minissdpc.h"
+ #include "miniwget.h"
+-- 
+1.8.1.5
+

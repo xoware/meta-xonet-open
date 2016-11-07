@@ -1,0 +1,217 @@
+#!/bin/sh
+
+PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+
+
+#In Manufacturing ENs are the active device and manuf station are passive
+# being controlling they have to make the first move and continue endlessly till a state is transitioned
+prep_firstboot() {
+	#execution reached here means
+	#this is the 0th boot per manufacturing Doc, only runs on manuf bench
+	#Expectations : ip address is link-local, ether mac is dummy, emmc+fs is populated, no nvram bootstage moniker, no nor sr#
+	#Protocol     : Send SvcReq till, Recv MAC1 MAC2 SR#, Flash manuf data and bootzero=true var to nvram(nor). Kill link-local ip
+	#		Also save boot0llip to my link-local-ip address to nvram.
+	echo " ReSetting up link-local for Manufacturing installation"
+	ip link set eth0 up 
+	iplsb=$(printf "%d" "'$(dd if=/dev/urandom bs=1 count=1 2>/dev/null)")
+	if [ $iplsb -lt 128 ]; then
+		iplsb=$(( iplsb +1 ))
+	else
+		iplsb=$(( iplsb -2 ))
+	fi
+	ipmlb=$(printf "%d" "'$(dd if=/dev/urandom bs=1 count=1 2>/dev/null)")
+	if [ $ipmlb -lt 128 ]; then
+		ipmlb=$(( ipmlb +1 ))
+	else
+		ipmlb=$(( ipmlb -2 ))
+	fi
+	/usr/bin/fw_setenv ipaddr 169.254.$ipmlb.$iplsb
+	/usr/bin/fw_setenv ipaddr0 169.254.$ipmlb.$iplsb
+	/usr/bin/fw_setenv ipaddr1 172.20.$ipmlb.$iplsb
+	/usr/bin/fw_setenv netmask 255.255.0.0
+	/usr/bin/fw_setenv serverip 169.254.254.254
+	ip addr add 169.254.$ipmlb.$iplsb/16 dev eth0 
+	ip a 
+	/usr/bin/fw_setenv bootzero true
+	echo
+	llip=$(ip add show dev eth0 | grep 169.254 | awk  '{print $2}' | awk -F'/' '{print $1}')	
+	mysr=""
+	mym1=""
+	mym2=""
+	while /bin/true; do
+		reply=$(echo "SvcReq" | socat -t3 - UDP-SENDTO:169.254.254.254:36969,bind=$llip)
+		if (echo $reply | grep ManufSR >/dev/null 2>&1) ; then 
+			#chop it up right here and break only if all values are there.
+			mysr=$(echo $reply | awk -F'|' '{print $1}' | awk -F'#' '{print $2}')
+			mym1=$(echo $reply | awk -F'|' '{print $2}' | awk -F'#' '{print $2}')
+			mym2=$(echo $reply | awk -F'|' '{print $3}' | awk -F'#' '{print $2}')
+			if [ "x$mysr" != "x" ] && [ "x$mym1" != "x" ] && [ "x$mym2" != "x" ]; then 
+				break
+			fi
+		fi
+	done
+
+	/usr/bin/fw_setenv ethaddr $mym1
+	/usr/bin/fw_setenv ethaddr0 $mym1
+	/usr/bin/fw_setenv ethaddr1 $mym2
+	/usr/bin/fw_setenv serialno $mysr
+
+	ip addr del $llip/16 dev eth0 
+	ip6eth0=$(ip -6 addr show dev eth0 | grep inet6 | awk '{print $2}') 
+	ip -6 addr del $ip6eth0 dev eth0
+	reboot
+}
+
+burst_shine() {
+	if [ "x$1" == "x" ]; then
+		#meaning normal bootup; only do minimal effort if manuf test hasnt finished uptill now
+		bind_opt="so-bindtodevice=eth0"
+	else
+		#send data via the correct ip  address
+		bind_opt="so-bindtodevice=eth0,bind=$1"
+	fi
+
+	myserver=$(/usr/bin/fw_printenv serverip | awk -F'=' '{print $2}')
+	let i=0;
+	while /bin/true; do
+	    lsusb | grep "6557:4200" >/dev/null 2>&1 &&  dd if=/dev/sda of=/dev/sda count=30k && (
+	    	echo "Blinking" | socat - UDP-SENDTO:$myserver:36969,$bind_opt
+	    	echo 1 >> /sys/class/gpio/gpio63/value
+	    )
+	    #only blink the manufacturing usb sticks to test usb port and makeup for feeble blinking led
+	    lsusb | grep "6557:4200" >/dev/null 2>&1 && ( dd if=/dev/zero of=/dev/sda count=30k; sync )
+	    if [ $i -eq 8 ]; then
+	        break
+	    fi
+	    i=$((i + 1))
+	    sleep 1
+	done
+}
+prep_interfaces() {
+
+	ip link set eth0 up 
+	myipalias=$(/usr/bin/fw_printenv ipaddr0 | awk -F'=' '{print $2}')
+	ip add add dev eth0 $myipalias/16
+	ip link set eth1 up 
+	myipalias1=$(/usr/bin/fw_printenv ipaddr1 | awk -F'=' '{print $2}')
+	ip add add dev eth1 $myipalias1/16
+
+}
+fin_firstboot() {
+	#execution reached inside bzero in this function means
+	#this is the 1st boot per manufacturing Doc, only runs on manuf bench
+	#Expectations : ip address is dynamic, ether mac is manuf, nvram bootzero=true, nor sr# is set, xokd_serial could be any
+	#Protocol     : Send Ready till, Recv ShineFlasher, remove bootzero=true var from nvram(nor). 
+	#		Send Blinking and BlinkLight by calling burst_shine in infinite while loop, till power yanked
+
+
+	bzero=$(/usr/bin/fw_printenv bootzero | awk -F'=' '{print $2}')
+	echo  63 >> /sys/class/gpio/export
+	echo  out >> /sys/class/gpio/gpio63/direction
+
+	#check for manufacturing aligator clip reset.
+	lsusb | grep "6557:4200" >/dev/null 2>&1 && ( 
+		echo  32 >> /sys/class/gpio/export
+		echo  in >> /sys/class/gpio/gpio32/direction
+		no_reset_clip=$(cat /sys/class/gpio/gpio32/value)
+		if [ $no_reset_clip -eq 0 ]; then
+			/usr/bin/fw_setenv ethaddr0
+			/usr/bin/fw_setenv ethaddr1
+			/usr/bin/fw_setenv serialno
+			/usr/bin/fw_setenv bootzero
+			dd if=/dev/zero of=/dev/mmcblk0 count=50k
+			reboot
+		fi
+	)
+
+	if [ "x$bzero" == "xtrue" ]; then
+		tstsrl=$(/usr/bin/fw_printenv serialno | awk -F'=' '{print $2}')
+		if [ "x$tstsrl" == "x" ]; then
+			prep_firstboot
+		fi
+		prep_interfaces
+		myserver=$(/usr/bin/fw_printenv serverip | awk -F'=' '{print $2}')
+		eth0ip=$(ip add show dev eth0 | grep 169.254 | awk  '{print $2}' | awk -F'/' '{print $1}')	
+		while /bin/true; do
+	    		lsusb | grep "6557:4200" >/dev/null 2>&1 &&  dd if=/dev/sda of=/dev/sda count=30k && break
+			sleep 1
+		done
+		while /bin/true; do
+	
+			reply=$(echo "Ready" | socat -t3 - UDP-SENDTO:$myserver:36969,so-bindtodevice=eth0,bind=$eth0ip)
+			if (echo $reply | grep ShineFlasher >/dev/null 2>&1) ; then 
+				/usr/bin/fw_setenv bootzero
+				break
+			fi
+		done
+	
+		while /bin/true; do
+			burst_shine $eth0ip
+		done
+	else
+		#if usb stick connected then it means that labeling is not done
+		lsusb | grep "6557:4200" >/dev/null 2>&1 && ( 
+			prep_interfaces
+			eth0ip=$(ip add show dev eth0 | grep 169.254 | awk  '{print $2}' | awk -F'/' '{print $1}')	
+			burst_shine $eth0ip
+
+			ip addr del $eth0ip/16 dev eth0 
+			ip6eth0=$(ip -6 addr show dev eth0 | grep inet6 | awk '{print $2}') 
+			ip -6 addr del $ip6eth0 dev eth0
+			myipalias1=$(/usr/bin/fw_printenv ipaddr1 | awk -F'=' '{print $2}')
+			ip add del $myipalias1/16 dev eth1
+			ip link set dev eth0 down
+			ip link set dev eth1 down
+		)
+	fi
+
+}
+
+
+
+
+
+myname=$(basename $0)
+
+
+[ -f /etc/XO_VERSION ] && date -s $(cat /etc/XO_VERSION | awk -F'.' '{print $3}')
+
+mym1=$(/usr/bin/fw_printenv ethaddr0 | awk -F'=' '{print $2}')
+mym2=$(/usr/bin/fw_printenv ethaddr1 | awk -F'=' '{print $2}')
+ip link set dev eth0 down
+ip link set dev eth0 address $mym1
+ip link set dev eth0 up
+ip link set dev eth1 down
+ip link set dev eth1 address $mym2
+ip link set dev eth1 up
+
+#xokd requires downed interfaces!!!
+ip link set dev eth0 down
+ip link set dev eth1 down
+
+mount |grep xokcfg && {
+  echo "First boot has already been run. Run bootup First Activity"
+  [ -f /xokcfg/wc.sav ] && date -s $(cat /xokcfg/wc.sav)
+  fin_firstboot
+  exit;
+}
+
+
+if [ ! -b  /dev/mmcblk0p3 ] 
+then
+  echo "config partition not found"
+  exit
+fi
+
+
+mkfs.ext4 /dev/mmcblk0p3
+mount -t ext4 /dev/mmcblk0p3 /xokcfg/
+check_ssl.sh
+
+
+nomanuf=$(/usr/bin/fw_printenv no_manuf | awk -F'=' '{print $2}')
+if [ "x$nomanuf" == "xtrue" ]; then
+	exit
+fi
+
+prep_firstboot

@@ -1,0 +1,13 @@
+#!/bin/sh
+
+
+mkdir -p /storage/core
+#echo "/storage/core/%e" > /proc/sys/kernel/core_pattern
+echo "/storage/core/%e.%p.%t" > /proc/sys/kernel/core_pattern
+
+FILECOUNT="$(find  /storage/core/ -maxdepth 1 -type f  |wc -l )"
+if [ $FILECOUNT -gt 12 ]
+then
+	echo "deleting too many cores"
+	rm -rf /storage/core/*
+fi;

@@ -1,0 +1,26 @@
+diff --git a/arch/arm/mach-cns3xxx/cns3420vb.c b/arch/arm/mach-cns3xxx/cns3420vb.c
+index 8fe8f7f..06bc3b6 100644
+--- a/arch/arm/mach-cns3xxx/cns3420vb.c
++++ b/arch/arm/mach-cns3xxx/cns3420vb.c
+@@ -92,10 +92,6 @@ static struct mtd_partition cns3420_nor_partitions[] = {
+ 		.offset		= MTDPART_OFS_APPEND,
+ 	}, {
+ 		.name		= "kernel",
+-		.size		= 0x450000,
+-		.offset		= MTDPART_OFS_APPEND,
+-	}, {
+-		.name		= "k2",
+ 		.size		= MTDPART_SIZ_FULL,
+ 		.offset		= MTDPART_OFS_APPEND,
+ 	},
+@@ -546,10 +542,6 @@ static struct mtd_partition cns3xxx_spi_partitions[] = {
+ 		.offset		= MTDPART_OFS_APPEND,
+ 	}, {
+ 		.name		= "kernel",
+-		.size		= 0x450000,
+-		.offset		= MTDPART_OFS_APPEND,
+-	}, {
+-		.name		= "k2",
+ 		.size		= MTDPART_SIZ_FULL,
+ 		.offset		= MTDPART_OFS_APPEND,
+ 	}

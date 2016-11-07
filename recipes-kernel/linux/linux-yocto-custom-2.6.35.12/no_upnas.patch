@@ -1,0 +1,11 @@
+--- a/Makefile	2014-05-23 00:42:37.987733645 -0700
++++ b/Makefile	2014-05-23 00:47:14.926638053 -0700
+@@ -1523,7 +1523,7 @@
+ UPNASDIR=drivers/net/cns3xxx-nas
+ PATCHES=$(UPNASDIR)/rename-cns3xxx-module.patch $(UPNASDIR)/cns3xxx_main.patch $(UPNASDIR)/cns3xxx_tool.patch $(UPNASDIR)/cns3xxx_ethtool.patch 
+ 
+-ifneq ($(strip $(PATCH_UPNAS)), n)
++ifeq ($(strip $(PATCH_UPNAS)), y)
+ drivers/net/cns3xxx-nas/cns3xxx-nas/cns3xxx-nas-patch: $(PATCHES) $(wildcard drivers/net/cns3xxx/*.c drivers/net/cns3xxx/*.h)
+ 	@$(kecho) 'Generating cns3xxx-nas...'
+ 	-@rm drivers/net/cns3xxx-nas/cns3xxx-nas $@ -rf 1>/dev/null 2>&1

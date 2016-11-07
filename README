@@ -1,0 +1,321 @@
+META for exokey bitbake open-embedded overlay
+
+Build dependencies
+* LZOP http://www.lzop.org/
+
+
+---
+Build procedure:
+
+1. Clone yocto/poky git repository
+git clone git://git.yoctoproject.org/poky
+
+2 Checkout dylan (12.X) branch 
+cd poky && git checkout dizzy -b xo1_branch
+
+
+3.  Clone meta-mvs layer
+git clone git@github.com:xoware/meta-xonet.git
+
+4. Initialize build directory
+source oe-init-build-env build_mvs
+
+
+5. Add meta-mvs layer path to bblayer configuration file
+vim conf/bblayers.conf:
+
+# LAYER_CONF_VERSION is increased each time build/conf/bblayers.conf
+# changes incompatibly
+LCONF_VERSION = "6"
+
+BBPATH = "${TOPDIR}"
+BBFILES ?= ""
+
+BBLAYERS ?= " \
+  /home/karl/workspace/meta-xonet \
+  /home/karl/workspace/meta \
+  /home/karl/workspace/meta-yocto \
+  /home/karl/workspace/meta-yocto-bsp \
+  "
+7. Edit local.conf to specify the machine, location of source archived, package type (rpm, deb or ipk)
+vim conf/local.conf:
+
+[...]
+MACHINE ??= "xo1-mvs"
+[...]
+DL_DIR ?= "your_download_directory_path"
+[...]
+PACKAGE_CLASSES ?= "package_ipk"
+
+DISTRO_FEATURES_append += " pam"
+INITRAMFS_IMAGE = "mvs-initramfs"
+INITRAMFS_IMAGE_BUNDLE = "1"
+FILESYSTEM_PERMS_TABLES = "files/fs-perms.txt"
+
+8. Build exokey image
+bitbake -v mvs-image
+
+  This will build and produce output in build/tmp/deploy/images:
+  A) firmware image in build/tmp/deploy/images/ExoNet_firmware.img   This is the image used in the UI
+
+  B) uImage Kernel image including initramfs 
+
+  C) mvs-image-xo1-mvs.squashfs  squahsfs
+
+  D) ExoNet_DOS_Image_1234.sh   a one time script to initialize SD card from linux.  It' sets up some FAT partitions and empty partitions on the card.
+
+
+uboot loading linux from network
+
+serial=20131115-workorder-12
+bootcmd=tftp 0x22000000 uImage.mvs; bootm 0x22000000
+bootargs="console=ttyS0,38400 root=/dev/nfs nfsroot=10.64.1.2:/xo1 ip=10.64.1.6:10.64.1.2:10.64.1.1:255.0.0.0:mvs:eth0 debug"
+
+
+bootcmd=mmcinit;fatload mmc 0:1 0x22000000 uImage;bootm 0x22000000; cp.b 0x600B0000 0x22000000 0x500000; bootm 0x22000000
+
+
+-------------------------------------------------------------------------
+
+
+* Appendix  A   Memory Map
+
+partitions defined in 
+arch/arm/mach-cns3xxx/cns3420vb.c
+
+Location   size
+0x60000000 0x50000   1st stage bootloader(xldr_ro)
+0x60050000 0x10000   xenv , 1st stage uboot env
+0x60060000 0x40000   s2_uboot
+0x600A0000 0x10000   ubenv
+0x600B0000 rest      Kernel
+
+
+
+
+
+
+-------------------------------------------------------------------------
+
+
+
+
+
+
+*  Appendix B  writing MMC / SD   for first time
+
+This assumes you have:
+1)  uboot running
+2)  tftp server with kernel uImage and rootfs (rootfs.sqashfs)  images. In below example 10.64.1.2
+
+
+**  Flash Kernel Image in uboot
+tftp 0x22000000 uImage.mvs
+cp.b 0x22000000 0x600B0000 0x500000
+
+
+** boot NOR rescue images
+ cp.b 0x600B0000 0x22000000 0x500000
+
+ bootm 0x22000000
+
+[    5.820000] Freeing init memory: 2320K
+[    5.960000] mmc0: new high speed SDHC card at address 59b4
+[    5.980000] mmcblk0: mmc0:59b4 USD   14.7 GiB 
+[    6.000000]  mmcblk0: p1
+>> block device /dev/mmcblk0p1 detected. 
+cp: can't stat '[    6.040000] alloc tx/rx resource
+/mnt/sd/rootfs.sqh': No such file or directory
+error copying rootfs
+Dropping you to a rescue shell.
+/bin/sh: can't access tty; job control turned off
+
+
+
+** If SD card mounted unmount.  This will occure if MMC was pre-formtated
+
+/ # df
+Filesystem           1K-blocks      Used Available Use% Mounted on
+/dev/mmcblk0p1        15432704        32  15432672   0% /mnt/sd
+
+
+
+** delete previous partitions
+
+/ # fdisk /dev/mmcblk0
+
+The number of cylinders for this disk is set to 1922.
+There is nothing wrong with that, but this is larger than 1024,
+and could in certain setups cause problems with:
+1) software that runs at boot time (e.g., old versions of LILO)
+2) booting and partitioning software from other OSs
+   (e.g., DOS FDISK, OS/2 FDISK)
+
+Command (m for help): p
+
+Disk /dev/mmcblk0: 15.8 GB, 15811477504 bytes
+255 heads, 63 sectors/track, 1922 cylinders
+Units = cylinders of 16065 * 512 = 8225280 bytes
+
+        Device Boot      Start         End      Blocks  Id System
+/dev/mmcblk0p1               1        1923    15436800   c Win95 FAT32 (LBA)
+
+Command (m for help): d
+Selected partition 1
+
+Command (m for help): p
+
+Disk /dev/mmcblk0: 15.8 GB, 15811477504 bytes
+255 heads, 63 sectors/track, 1922 cylinders
+Units = cylinders of 16065 * 512 = 8225280 bytes
+
+        Device Boot      Start         End      Blocks  Id System
+
+Command (m for help): w
+The partition table has been altered.
+Calling ioctl() to re-read partition table
+[  203.760000]  mmcblk0:
+
+
+** create four partitions
+
+fdisk /dev/mmcblk0
+
+The number of cylinders for this disk is set to 482528.
+There is nothing wrong with that, but this is larger than 1024,
+and could in certain setups cause problems with:
+1) software that runs at boot time (e.g., old versions of LILO)
+2) booting and partitioning software from other OSs
+   (e.g., DOS FDISK, OS/2 FDISK)
+
+Command (m for help): n
+Command action
+   e   extended
+   p   primary partition (1-4)
+p
+Partition number (1-4): 1
+First cylinder (1-482528, default 1): Using default value 1
+Last cylinder or +size or +sizeM or +sizeK (1-482528, default 482528): +128M
+
+Command (m for help): n
+Command action
+   e   extended
+   p   primary partition (1-4)
+p
+Partition number (1-4): 2
+First cylinder (3908-482528, default 3908): Using default value 3908
+Last cylinder or +size or +sizeM or +sizeK (3908-482528, default 482528): +128M
+
+Command (m for help): n
+Command action
+   e   extended
+   p   primary partition (1-4)
+p
+Partition number (1-4): 3
+First cylinder (7815-482528, default 7815): Using default value 7815
+Last cylinder or +size or +sizeM or +sizeK (7815-482528, default 482528): +128M
+
+Command (m for help): n
+Command action
+   e   extended
+   p   primary partition (1-4)
+p
+Selected partition 4
+First cylinder (11722-482528, default 11722): 4
+Value is out of range
+First cylinder (11722-482528, default 11722): Using default value 11722
+Last cylinder or +size or +sizeM or +sizeK (11722-482528, default 482528): Using default value 482528
+
+Command (m for help): p
+
+Disk /dev/mmcblk0: 15.8 GB, 15811477504 bytes
+4 heads, 16 sectors/track, 482528 cylinders
+Units = cylinders of 64 * 512 = 32768 bytes
+
+        Device Boot      Start         End      Blocks  Id System
+/dev/mmcblk0p1               1        3907      125016  83 Linux
+/dev/mmcblk0p2            3908        7814      125024  83 Linux
+/dev/mmcblk0p3            7815       11721      125024  83 Linux
+/dev/mmcblk0p4           11722      482528    15065824  83 Linux
+
+Command (m for help): t
+Partition number (1-4): 1
+Hex code (type L to list codes): c
+Changed system type of partition 1 to c (Win95 FAT32 (LBA))
+
+Command (m for help): t
+Partition number (1-4): 2
+Hex code (type L to list codes): c
+Changed system type of partition 2 to c (Win95 FAT32 (LBA))
+
+Command (m for help): w
+The partition table has been altered.
+Calling ioctl() to re-read partition table
+[  366.910000]  mmcblk0: p1 p2 p3 p4
+/ # fdisk /dev/mmcblk0
+
+The number of cylinders for this disk is set to 482528.
+There is nothing wrong with that, but this is larger than 1024,
+and could in certain setups cause problems with:
+1) software that runs at boot time (e.g., old versions of LILO)
+2) booting and partitioning software from other OSs
+   (e.g., DOS FDISK, OS/2 FDISK)
+
+Command (m for help): p
+
+Disk /dev/mmcblk0: 15.8 GB, 15811477504 bytes
+4 heads, 16 sectors/track, 482528 cylinders
+Units = cylinders of 64 * 512 = 32768 bytes
+
+        Device Boot      Start         End      Blocks  Id System
+/dev/mmcblk0p1               1        3907      125016   c Win95 FAT32 (LBA)
+/dev/mmcblk0p2            3908        7814      125024   c Win95 FAT32 (LBA)
+/dev/mmcblk0p3            7815       11721      125024  83 Linux
+/dev/mmcblk0p4           11722      482528    15065824  83 Linux
+
+Command (m for help): q
+
+
+** format MSDOS
+
+mkfs.vfat /dev/mmcblk0p1
+
+** Mount partition
+
+/ # mount /dev/mmcblk0p1 /mnt/sd
+/ # df
+Filesystem           1K-blocks      Used Available Use% Mounted on
+/dev/mmcblk0p1          123089         1    123089   0% /mnt/sd
+
+
+** change directory
+/ # cd /mnt/sd
+/mnt/sd # 
+
+** download kernel and rootfs images
+#
+tftp -g -r uImage 10.64.1.2
+tftp -g -r rootfs.sqh 10.64.1.2
+
+/mnt/sd # ls -la
+drwxr-xr-x    2 0        0              512 Jan  1 00:21 .
+drwxr-xr-x    6 0        0                0 Jan  1 00:00 ..
+-rwxr-xr-x    1 0        0         31727616 Jan  1 00:21 rootfs.sqh
+-rwxr-xr-x    1 0        0          5004052 Jan  1 00:10 uImage
+
+
+
+/mnt/sd # df
+Filesystem           1K-blocks      Used Available Use% Mounted on
+/dev/mmcblk0p1          123089     35872     87218  29% /mnt/sd
+/mnt/sd # cd /
+/ # umount  /mnt/sd/
+/ # df
+Filesystem           1K-blocks      Used Available Use% Mounted on
+/ # 
+
+
+** reboot
+
+
+

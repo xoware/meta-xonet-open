@@ -1,0 +1,7 @@
+#!/bin/sh
+
+cd /nitrox
+insmod pkp_drv.ko ssl=0
+cd bin
+./csp1_init ssl=0
+./xo_get_rnd 12345 > /tmp/rand

@@ -1,0 +1,417 @@
+#!/bin/busybox sh
+#
+#  XoWare Init for initramfs
+#  Goals here:
+#  1.   Detect if update image is available, and if so, apply it before mounting flash filesystems
+#  2.   mount root fs  on flash or nfs (development)
+#  3.   Continue bootprocess calling switch_root 
+
+
+# msg functions arguments
+# $1 string
+# $2 hide flag
+
+good_msg() {	
+	msg_string=$1
+	msg_string="${msg_string:-...}"
+	[ "$2" != 1 ] && echo -e "${GOOD}>>${NORMAL}${BOLD} ${msg_string} ${NORMAL}"
+}
+
+bad_msg() {
+	msg_string=$1
+	msg_string="${msg_string:-...}"
+	if [ "$2" != 1 ]
+	then
+		echo -e "${BAD}!!${NORMAL}${BOLD} ${msg_string} ${NORMAL}"
+	fi
+} 
+
+warn_msg() {
+	msg_string=$1
+	msg_string="${msg_string:-...}"
+	[ "$2" != 1 ] && echo -e "${WARN}**${NORMAL}${BOLD} ${msg_string} ${NORMAL}"
+}
+
+rescue_shell() {
+    echo "Dropping you to a rescue shell."
+    /bin/busybox --install -s
+    exec /bin/sh
+}
+
+remote_rescue_shell() {
+    # Bring up network interface
+    ifconfig eth0 10.64.1.8 up
+
+    # telnetd requires devpts
+    mkdir -p /dev/pts
+    mount -t devpts none /dev/pts
+
+    # Start the telnet server
+    telnetd -l /bin/sh
+
+    # Continue with the local rescue shell
+    rescue_shell
+}
+
+mount_real_root () {
+	echo "Start real root ${REAL_ROOT} "
+	cat /proc/mounts
+	# Clean up.
+	umount /proc
+	umount /sys
+
+	# Boot the real thing.
+	exec switch_root ${REAL_ROOT} /sbin/init
+
+}
+check_rescue() {
+	if grep 'rescue' /proc/cmdline > /dev/null 2>&1; then
+		echo "rescue in cmdline"
+		remote_rescue_shell
+	else
+		return
+	fi
+}
+
+check_nfsmount() {
+
+	if grep 'nfsroot=' /proc/cmdline > /dev/null 2>&1; then
+		echo "NFS specified in cmd line"
+	else
+		return
+	fi
+
+	# Obtain NFSIP	
+	OPTIONS=`cat /proc/cmdline"`
+	for OPTION in $OPTIONS
+	do
+		if [ `echo $OPTION | sed -e "s/=/ /g" | cut -d " " -f 1` = 'nfsroot' ]
+		then
+			echo "NFSOPT = ${OPTION}"
+			NFSIP=`echo $OPTION | sed -e 's/:/=/' |cut -d= -f2`
+			NFSPATH=`echo $OPTION | sed -e 's/:/=/' |cut -d= -f3`
+		fi
+		if [ `echo $OPTION | sed -e "s/=/ /g" | cut -d " " -f 1` = 'ip' ]
+		then
+			echo "NFSOPT = ${OPTION}"
+			MYIP=`echo $OPTION | sed -e 's/:/=/' |cut -d= -f2`
+			SERVERIP=`echo $OPTION | sed -e 's/:/=/g' |cut -d= -f3`
+			GWIP=`echo $OPTION | sed -e 's/:/=/g' |cut -d= -f4`
+			MASKIP=`echo $OPTION | sed -e 's/:/=/g' |cut -d= -f5`
+
+
+		fi 
+	done
+
+	# Setup NFSROOT
+	if [ "${NFSIP}" != '' ] && [ "$NFSPATH" != '' ]
+	then
+		NFSROOT="${NFSIP}:${NFSPATH}"
+	else
+		bad_msg "Please check your paramaters nfsroot=<...> parameter."
+	fi
+
+	if [ "${NFSROOT}" != '' ]
+	then
+
+		NFSOPTIONS="ro,nfsvers=3,nolock"
+
+		good_msg "Attempting to mount NFS root on ${NFSROOT} with options ${NFSOPTIONS}"
+		mkdir -p /mnt/nfs
+		good_msg "SLEEP  MAC takes a while to init"
+		ip link set eth0 up
+		ip link set eth1 up
+		ip addr add ${MYIP}/24 dev eth0
+		sleep 5
+		ip a
+		local count=20
+		while [ ${count} -gt 0 ]
+		do 
+			count=$((count-1))
+			ping -c 1 -w 2 ${NFSIP}
+			if [ "$?" = '0' ]
+			then
+				break
+			fi
+			echo "retries left ${count}"
+			sleep 2
+		done
+		mount -t nfs -o ${NFSOPTIONS} ${NFSROOT} /mnt/nfs
+		if [ "$?" = '0' ]
+		then
+			REAL_ROOT="/mnt/nfs"
+			mount_real_root
+		fi
+
+		# retry once
+		mount -t nfs -o ${NFSOPTIONS} ${NFSROOT} /mnt/nfs
+		if [ "$?" = '0' ]
+		then
+			REAL_ROOT="/mnt/nfs"
+			mount_real_root
+		else
+			bad_msg "NFS Mounting failed. Is the path correct ?"
+			remote_rescue_shell
+		fi
+	fi
+	
+}
+check_fw_upgrade () {
+	if grep '"new_rootfs"' /proc/mtd > /dev/null 2>&1; then
+		echo "new_rootfs found"
+		ubirmvol /dev/ubi0  -N old_rootfs > /dev/null 2>&1
+		ubirename /dev/ubi0 rootfs old_rootfs new_rootfs rootfs
+		ubirmvol /dev/ubi0  -N old_rootfs > /dev/null 2>&1
+		
+		ROOTFS_MTD=`grep '"new_rootfs"' /proc/mtd |cut -d ':' -f1 |sed -e 's/mtd//'`
+		mount -t squashfs /dev/mtdblock${ROOTFS_MTD}  /mnt/root/
+		if [ "$?" = '0' ]
+		then
+			REAL_ROOT="/mnt/root"
+			mount_real_root
+		fi
+	fi
+}
+
+mount_rootfs_squashfs_ubi () {
+	echo "checking rootfs"
+	if grep '"rootfs"' /proc/mtd > /dev/null 2>&1; then
+		echo "rootfs found"
+		ROOTFS_MTD=`grep '"rootfs"' /proc/mtd |cut -d ':' -f1 |sed -e 's/mtd//'`
+		mount -t squashfs /dev/mtdblock${ROOTFS_MTD}  /mnt/root/
+		if [ "$?" = '0' ]
+		then
+			REAL_ROOT="/mnt/root"
+			mount_real_root
+		else 
+			bad_msg "Flash Mounting failed."
+			remote_rescue_shell
+		fi
+		
+	fi
+}
+
+fail() {
+	return 1;
+}
+
+iplsb="0"
+
+check_tftp_upgrade() {
+
+
+	#this is the -ve boot per manufacturing Document, only runs on manuf bench
+	#Expectations : ip address is link-local, ether mac is dummy, emmc is empty, no nvram bootstage moniker, no nor sr#
+	#Protocol     : obtain the package and flash it
+
+	echo " Check tftp upgrade" 
+	MMC_DEV=$1
+
+	echo "wipe out disk to init partitions "
+	dd if=/dev/zero of=${MMC_DEV} count=1 bs=256k
+	blockdev --rereadpt ${MMC_DEV}
+	fdisk -l ${MMC_DEV};
+	sleep 3;
+	echo "setup partitions (rootfs + kernel), ( backup/upgrad rootfs+kernel), (config),  (storage)"
+	(echo "o"; echo "n"; echo "p"; echo "1"; echo ""; echo "+128M"; echo "t"; echo "c"; \
+	echo ""; echo "n"; echo "p"; echo "2"; echo ""; echo "+128M"; echo "t"; echo "2"; echo "c"; \
+	echo ""; echo "n"; echo "p"; echo "3"; echo ""; echo "+128M"; echo "t"; echo "3"; echo "83"; \
+	echo "n"; echo "p"; echo "4"; echo ""; echo ""; echo "t"; echo "4"; echo "83";\
+	echo ""; echo "p"; echo "w") |fdisk ${MMC_DEV}  ;
+	blockdev --rereadpt ${MMC_DEV}
+	fdisk -l ${MMC_DEV};
+	sleep 5;
+	while [ ! -b ${MMC_DEV}p1 ] ; do
+		echo sleeping for dev pop 1;
+		sleep 1;
+	done
+	while [ ! -b ${MMC_DEV}p2 ] ; do
+		echo sleeping for dev pop 2;
+		sleep 1;
+	done
+	while [ ! -b ${MMC_DEV}p3 ] ; do
+		echo sleeping for dev pop 3;
+		sleep 1;
+	done
+	while [ ! -b ${MMC_DEV}p4 ] ; do
+		echo sleeping for dev pop 4;
+		sleep 1;
+	done
+	
+
+	SD_ROOT1=${MMC_DEV}p1
+	SD_ROOT2=${MMC_DEV}p2
+	SD_CONFIG=${MMC_DEV}p3
+	SD_STORAGE=${MMC_DEV}p4
+
+	mkfs.vfat ${SD_ROOT1}
+	mkdir -p /mnt/tmp
+	until ( mount ${SD_ROOT1} /mnt/tmp );
+	do 
+		sync;
+		echo sleep a second for sync;
+		sleep 1;
+	done
+
+	mkfs.vfat ${SD_ROOT2}
+	mkfs.ext2 ${SD_CONFIG}
+	mkfs.ext2 ${SD_STORAGE}
+	mkdir -p /mnt/tmp1
+	until ( mount ${SD_STORAGE} /mnt/tmp1 );
+	do 
+		sync;
+		echo sleep a second for sync;
+		sleep 1;
+	done
+	echo " Finished setting up Volumes"
+	mount
+	echo
+
+	echo " Setting up link-local for Manufacturing installation"
+	ip link set eth0 up 
+	iplsb=$(printf "%d" "'$(dd if=/dev/urandom bs=1 count=1 2>/dev/null)")
+	if [ $iplsb -lt 128 ]; then
+		iplsb=$(( iplsb +1 ))
+	else
+		iplsb=$(( iplsb -1 ))
+	fi
+	ip addr add 169.254.254.$iplsb/24 dev eth0 
+	ip a 
+	echo
+
+	cd /mnt/tmp1
+	pwd
+
+	local count=1
+	while [ ${count} -gt 0 ]
+	do 
+		echo " Obtaining package"
+		tftp -g -r ExoNet_DOS_Image.sh 169.254.254.254
+		if [ "$?" == '0' ]
+		then
+			sync;
+			chmod 755 ExoNet_DOS_Image.sh;
+			echo " Verifying package"
+			chk1=$(cat ExoNet_DOS_Image.sh | sed 's/^fwchksum=.*/fwchksum=""/' | md5sum | awk '{print $1}') 
+ 			chk2=$(cat ExoNet_DOS_Image.sh | grep ^fwchksum= | awk -F\" '{print $2}' )
+ 			if [ "$chk1" == "$chk2" ]; then 
+				break
+			else
+				echo "verification failed"
+			fi
+		fi
+		echo "Retrying "
+		sleep 1
+	done
+
+#	ONLY_VRFY="true" \
+#	./ExoNet_DOS_Image.sh /dev/mmcblk0 
+#	ONLY_DATA="true" \
+#	./ExoNet_DOS_Image.sh /dev/mmcblk0 
+	echo " Extracting kernel"
+	cat ExoNet_DOS_Image.sh | awk \
+		'/mnt\/tmp\/uImage/ {kernel=1;next} /LZT_EFS/ {kernel=0} kernel {print}' \
+		| base64 -d > /mnt/tmp/uImage
+	echo " Extracting rootfs"
+	cat ExoNet_DOS_Image.sh | awk \
+		'/mnt\/tmp\/rootfs.sqh/ {squashfs=1;next} /LZT_EFS/ {squashfs=0} squashfs {print}' \
+		| base64 -d > /mnt/tmp/rootfs.sqh
+	cd -
+	sync
+	umount /mnt/tmp1
+	umount /mnt/tmp
+	rmdir /mnt/tmp1
+	rmdir /mnt/tmp
+
+	#move clear lladdr to 1st boot... Not
+	ip addr del 169.254.254.$iplsb/24 dev eth0 
+	ip6eth0=$(ip -6 addr show dev eth0 | grep inet6 | awk '{print $2}') 
+	ip -6 addr del $ip6eth0 dev eth0
+	dd if=/dev/zero of=/dev/mmcblk0p3
+	dd if=/dev/zero of=/dev/mmcblk0p4 bs=4096 count=1024
+
+}
+
+expect_mount() {
+	MMC_P1=$1
+		mount -t vfat -o ro ${MMC_P1} /mnt/sd
+		if [ "$?" == '0' ]
+		then
+			cp /mnt/sd/rootfs.sqh /mnt/squash
+			if [ "$?" == '0' ]
+			then
+				[ -f /mnt/sd/uImage ] && \
+				mount -o loop -t squashfs /mnt/squash/rootfs.sqh /mnt/root
+				if [ "$?" == '0' ]
+				then
+					umount /mnt/sd
+					REAL_ROOT="/mnt/root"
+					mount_real_root
+				fi
+				umount /mnt/root
+			fi
+			rm /mnt/squash/rootfs.sqh
+		fi
+		umount /mnt/sd
+	fail
+}
+
+# mount the rootfs on fat as loop.  NOTE in the future we could have a fallback rootfs
+mount_rootfs_squashfs_fat () {
+	mkdir -p /mnt/sd /mnt/squash
+	
+	MMC_P1="/dev/mmcblk0p1"
+	local count=10
+	while [ ${count} -gt 0 ]
+	do 
+		count=$((count-1))
+	    
+		if [ -b "${MMC_P1}" ]
+		then
+			good_msg "block device ${MMC_P1} detected."
+			break
+		fi
+		sleep 1
+	done
+
+	if [  -b "${MMC_P1}" ]
+	then
+		expect_mount ${MMC_P1} 
+	fi
+	
+	echo "Timeout detecting ${MMC_P1}"
+	check_tftp_upgrade /dev/mmcblk0 
+	echo "Finished Running upgrade, Attempting to mount the new system"
+	expect_mount ${MMC_P1} 
+	
+	[ "$?" -ne 0 ] && fail 
+
+}
+
+
+## Main Startup
+# Mount the /proc and /sys filesystems.
+mkdir -p /proc /sys /mnt/new /mnt/root
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+echo /sbin/mdev > /proc/sys/kernel/hotplug
+mdev -s
+
+
+check_rescue
+
+check_nfsmount
+
+#this is the kernelargs init at each boot-time, run before the
+#pivot/switch_root to the busybox systemdaemon and real_root
+#if successful expect_mount takes over
+mount_rootfs_squashfs_fat
+
+#Failover rescue shell
+remote_rescue_shell
+
+#never come here
+echo "REAL_ROOT=${REAL_ROOT}"
+
+
+

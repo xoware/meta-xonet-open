@@ -1,0 +1,163 @@
+diff --git a/drivers/net/cns3xxx_pse_init/cns3xxx_phy.c b/drivers/net/cns3xxx_pse_init/cns3xxx_phy.c
+index bbcaccd..66fa4c2 100644
+--- a/drivers/net/cns3xxx_pse_init/cns3xxx_phy.c
++++ b/drivers/net/cns3xxx_pse_init/cns3xxx_phy.c
+@@ -60,6 +60,8 @@ module_param(jumbo_frame, ushort, S_IRUGO|S_IWUSR);
+ EXPORT_SYMBOL_GPL(jumbo_frame);
+ #endif
+ 
++int is_xo5;
++
+ static struct  task_struct *vsc_loop;
+ 
+ static u16 get_phy_id(u8 phy_addr);
+@@ -1999,6 +2001,11 @@ void general_init_mac(u8 mac_port, u16 phy_addr, u8 rgmii_phy, u8 giga_mode)
+ 	// RX flow control off
+ 	mac_port_config &= (~(0x1 << 11));
+ #endif
++	if(is_xo5) {
++		cns3xxx_txc_dly(mac_port, 1);
++		cns3xxx_rxc_dly(mac_port, 0);
++		mac_port_config = 0x438480;
++	}
+ 
+ 	SWITCH_REG_VALUE(mac_addr[mac_port]) = mac_port_config;
+ }
+@@ -2083,6 +2090,10 @@ int general_init_phy(u8 mac_port, u8 phy_addr, u16 phy_id, u8 rgmii_phy, u8 giga
+ 		}
+ #endif
+ 	}
++	if (phy_id == 0x22) {
++	//set macrel clock skew here for xo5 board
++		IOCDA_REG = 0x55555800;
++	}
+ 	general_init_mac(mac_port, phy_addr, rgmii_phy, giga_mode);
+ 
+ 	// read advertisement register
+@@ -3231,6 +3242,7 @@ void ar8327_init(u8 mac_port, u16 phy_address)
+ int probe_phy(u8 mac_port, u8 phy_addr)
+ {
+ 	u16 phy_id;
++	is_xo5 = 0;
+ 	phy_id = get_phy_id(phy_addr); 
+ 	printk("phy_id: %x\n", phy_id);
+ 	
+@@ -3255,6 +3267,11 @@ int probe_phy(u8 mac_port, u8 phy_addr)
+ 		// rgmii_phy, giga mode
+ 		general_init_phy(mac_port, phy_addr, phy_id, 1, 1);
+ 		break;
++	case 0x22:
++		printk("Init XO5 phy\n");
++		is_xo5 = 1;
++		general_init_phy(mac_port, phy_addr, phy_id, 1, 1);
++		break;
+ 	default:
+ 		printk("unknown phy id: %x\n", phy_id);
+ 		return 1;
+diff --git a/drivers/net/cns3xxx/cns3xxx_main.c b/drivers/net/cns3xxx/cns3xxx_main.c
+index 9954ff9..86dfa7b 100644
+--- a/drivers/net/cns3xxx/cns3xxx_main.c
++++ b/drivers/net/cns3xxx/cns3xxx_main.c
+@@ -2851,7 +2851,7 @@ static inline int pse_resume(void)
+ 	/*  1. enable mac port */
+ 	enable_port(0, 1);
+ 	enable_port(1, 1);
+-	enable_port(2, 1);
++//	enable_port(2, 1);
+ 	enable_port(3, 1);
+ 	INTR_MASK_REG=0x0;
+ #ifdef CONFIG_CPU_FREQ
+@@ -2938,6 +2938,54 @@ static struct notifier_block pse_power_notifier = {
+ };
+ #endif
+ 
++//extern atags
++extern unsigned int system_serial_high;
++extern unsigned int system_serial_low;
++void obtain_atags_mac(void){
++
++	vlan_table_entry[0].my_mac[0] = ( system_serial_high >> 8*1 )& 0x000000FF;
++	vlan_table_entry[0].my_mac[1] = ( system_serial_high >> 8*0 )& 0x000000FF;
++	vlan_table_entry[0].my_mac[2] = ( system_serial_low >> 8*3 )& 0x000000FF;
++	vlan_table_entry[0].my_mac[3] = ( system_serial_low >> 8*2 )& 0x000000FF;
++	vlan_table_entry[0].my_mac[4] = ( system_serial_low >> 8*1 )& 0x000000FF;
++	vlan_table_entry[0].my_mac[5] = ( system_serial_low >> 8*0 )& 0x000000FF;
++
++	arl_table_entry[0].mac[0] = ( system_serial_high >> 8*1 )& 0x000000FF;
++	arl_table_entry[0].mac[1] = ( system_serial_high >> 8*0 )& 0x000000FF;
++	arl_table_entry[0].mac[2] = ( system_serial_low >> 8*3 )& 0x000000FF;
++	arl_table_entry[0].mac[3] = ( system_serial_low >> 8*2 )& 0x000000FF;
++	arl_table_entry[0].mac[4] = ( system_serial_low >> 8*1 )& 0x000000FF;
++	arl_table_entry[0].mac[5] = ( system_serial_low >> 8*0 )& 0x000000FF;
++
++	net_device_prive[0].mac[0] = ( system_serial_high >> 8*1 )& 0x000000FF;
++	net_device_prive[0].mac[1] = ( system_serial_high >> 8*0 )& 0x000000FF;
++	net_device_prive[0].mac[2] = ( system_serial_low >> 8*3 )& 0x000000FF;
++	net_device_prive[0].mac[3] = ( system_serial_low >> 8*2 )& 0x000000FF;
++	net_device_prive[0].mac[4] = ( system_serial_low >> 8*1 )& 0x000000FF;
++	net_device_prive[0].mac[5] = ( system_serial_low >> 8*0 )& 0x000000FF;
++
++	vlan_table_entry[1].my_mac[0] = ( system_serial_high >> 8*1 )& 0x000000FF;
++	vlan_table_entry[1].my_mac[1] = ( system_serial_high >> 8*0 )& 0x000000FF;
++	vlan_table_entry[1].my_mac[2] = ( system_serial_low >> 8*3 )& 0x000000FF;
++	vlan_table_entry[1].my_mac[3] = ( system_serial_low >> 8*2 )& 0x000000FF;
++	vlan_table_entry[1].my_mac[4] = ( system_serial_low >> 8*1 )& 0x000000FF;
++	vlan_table_entry[1].my_mac[5] = (( system_serial_low >> 8*0 )& 0x000000FF) + 1;
++
++	arl_table_entry[1].mac[0] = ( system_serial_high >> 8*1 )& 0x000000FF;
++	arl_table_entry[1].mac[1] = ( system_serial_high >> 8*0 )& 0x000000FF;
++	arl_table_entry[1].mac[2] = ( system_serial_low >> 8*3 )& 0x000000FF;
++	arl_table_entry[1].mac[3] = ( system_serial_low >> 8*2 )& 0x000000FF;
++	arl_table_entry[1].mac[4] = ( system_serial_low >> 8*1 )& 0x000000FF;
++	arl_table_entry[1].mac[5] = (( system_serial_low >> 8*0 )& 0x000000FF) + 1;
++
++	net_device_prive[1].mac[0] = ( system_serial_high >> 8*1 )& 0x000000FF;
++	net_device_prive[1].mac[1] = ( system_serial_high >> 8*0 )& 0x000000FF;
++	net_device_prive[1].mac[2] = ( system_serial_low >> 8*3 )& 0x000000FF;
++	net_device_prive[1].mac[3] = ( system_serial_low >> 8*2 )& 0x000000FF;
++	net_device_prive[1].mac[4] = ( system_serial_low >> 8*1 )& 0x000000FF;
++	net_device_prive[1].mac[5] = (( system_serial_low >> 8*0 )& 0x000000FF) + 1;
++}
++
+ static int __init cns3xxx_init_module(void)
+ {
+ 	// when tx_ring/rx_ring alloc memory, 
+@@ -2959,6 +3007,8 @@ static int __init cns3xxx_init_module(void)
+ 	ring_info.num_tx_queues = 1;
+ #endif
+ 
++	obtain_atags_mac();
++
+ 	ring_info.rx_ring = kcalloc(ring_info.num_rx_queues, sizeof(RXRing), GFP_KERNEL);
+ 	if (!ring_info.rx_ring)
+ 		return -ENOMEM;
+diff --git a/drivers/net/cns3xxx_pse_init/pse_init.c b/drivers/net/cns3xxx_pse_init/pse_init.c
+index decb4a7..b81454d 100644
+--- a/drivers/net/cns3xxx_pse_init/pse_init.c
++++ b/drivers/net/cns3xxx_pse_init/pse_init.c
+@@ -490,7 +490,7 @@ void cns3xxx_gsw_hw_init(void)
+ 
+ 	cns3xxx_general_mac_cfg(0);
+ 	cns3xxx_general_mac_cfg(1);
+-	cns3xxx_general_mac_cfg(2);
++//	cns3xxx_general_mac_cfg(2);
+ 	cns3xxx_configu_cpu_port();
+ 
+ 	// write vlan table
+@@ -501,13 +501,15 @@ void cns3xxx_gsw_hw_init(void)
+ 	
+ 	cns3xxx_set_pvid(0, PORT0_PVID);
+ 	cns3xxx_set_pvid(1, PORT1_PVID);
+-	cns3xxx_set_pvid(2, PORT2_PVID);
++//	cns3xxx_set_pvid(2, PORT2_PVID);
+ 	cns3xxx_set_pvid(3, CPU_PVID);
+ 
+ #ifdef CNS3XXX_SET_ARL_TABLE
+ 	// set arl table
+ 	cns3xxx_arl_table_flush();
+ #endif
++	
++        PHY_AUTO_ADDR_REG &= 0xFF00FFFF;
+ }
+ 
+ int cns3xxx_gsw_config_mac_port0(void)

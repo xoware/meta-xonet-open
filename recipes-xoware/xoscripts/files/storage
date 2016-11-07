@@ -1,0 +1,22 @@
+#!/bin/sh
+
+PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+
+
+mount |grep storage && {
+  echo "storage mounted"
+  exit;
+}
+echo "storage not mounted"
+
+
+if [ ! -b  /dev/mmcblk0p4 ] 
+then
+  echo "storage partition not found"
+  exit
+fi
+
+
+mkfs.ext4 /dev/mmcblk0p4
+mount -t ext4 /dev/mmcblk0p4 /storage
+
